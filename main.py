@@ -101,7 +101,40 @@ def load_config() -> list[dict[str, Any]]:
             }]
     except Exception:
         pass
-    return []
+def get_discord_token() -> str | None:
+    """Retrieve Discord User Token from Environment Variables or config.json."""
+    token = os.environ.get("USER_TOKEN") or os.environ.get("DISCORD_TOKEN")
+    if token and token.strip():
+        return token.strip()
+    if os.path.exists(CONFIG_FILE):
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if "user_token" in data and isinstance(data["user_token"], str) and data["user_token"].strip():
+                return data["user_token"].strip()
+        except Exception:
+            pass
+    return None
+
+
+async def inject_discord_token(page: Page, token: str, app: AppState) -> bool:
+    """Inject Discord User Token into Playwright LocalStorage for headless login."""
+    clean_token = token.strip().strip('"').strip("'")
+    app.log("SYSTEM", "LOGIN", "Injecting Discord User Token into LocalStorage...")
+    try:
+        await page.goto("https://discord.com/login", wait_until="domcontentloaded", timeout=30000)
+        await asyncio.sleep(1.5)
+        await page.evaluate("""(token) => {
+            const iframe = document.createElement('iframe');
+            document.body.appendChild(iframe);
+            iframe.contentWindow.localStorage.token = `"${token}"`;
+        }""", clean_token)
+        await asyncio.sleep(1)
+        app.log("SYSTEM", "LOGIN", "Token injected successfully.")
+        return True
+    except Exception as e:
+        app.log("SYSTEM", "ERR", f"Token injection error: {e}")
+        return False
 
 
 def get_channel_message(cfg: dict[str, Any], idx: int) -> str:
@@ -403,14 +436,23 @@ async def main_async() -> None:
             pages.append(await ctx.new_page())
 
         # Verify initial login on primary channel
-        app.log("SYSTEM", "SETUP", "Verifying login on primary channel...")
+        token = get_discord_token()
+        if token:
+            await inject_discord_token(pages[0], token, app)
+        else:
+            app.log("SYSTEM", "WARN", "No USER_TOKEN found. Checking existing browser session...")
+
+        app.log("SYSTEM", "SETUP", "Navigating to primary channel...")
         try:
             await pages[0].goto(channels_cfg[0]["channel_url"], wait_until="domcontentloaded", timeout=60000)
         except Exception:
             pass
 
         if not await wait_for_chat_box(pages[0], ctx, not is_gui, app):
-            app.log("SYSTEM", "ERR", "Login timeout. Exiting.")
+            if not token:
+                app.log("SYSTEM", "ERR", "Login failed! Please set USER_TOKEN in Dokploy Environment or config.json.")
+            else:
+                app.log("SYSTEM", "ERR", "Login failed! Please check if your USER_TOKEN is valid.")
             await ctx.close()
             return
 
