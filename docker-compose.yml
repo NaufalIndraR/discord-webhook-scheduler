@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  discord-bot:
+    build: .
+    container_name: discord-scheduler
+    restart: always
+    environment:
+      - USER_TOKEN=${USER_TOKEN}
+      - CHANNEL_ID=${CHANNEL_ID}
+      - WEBHOOK_URL=${WEBHOOK_URL}
+    volumes:
+      - ./config.json:/app/config.json
+      - ./log_user.txt:/app/log_user.txt

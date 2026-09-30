@@ -1,0 +1,25 @@
+{
+  "channels": [
+    {
+      "name": "Channel 1 (Jammer & Items)",
+      "channel_url": "https://discord.com/channels/571992648190263317/806523338797219860",
+      "message_file": "msg1.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 2 (Blasts & Address)",
+      "channel_url": "https://discord.com/channels/571992648190263317/782718823488290826",
+      "message_file": "msg2.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 3 (Vending 8)",
+      "channel_url": "https://discord.com/channels/571992648190263317/782722952256159754",
+      "message_file": "msg3.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
+    }
+  ]
+}

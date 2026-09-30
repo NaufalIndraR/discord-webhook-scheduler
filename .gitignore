@@ -1,0 +1,19 @@
+# Virtual environment
+venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Local persistent browser data (contains login session)
+discord_browser_data*/
+
+# Environment and sensitive tokens
+.env
+.env.*
+!.env.example
+
+# Logs
+log*.txt
+*.log
