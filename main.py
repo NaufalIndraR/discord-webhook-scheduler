@@ -378,16 +378,25 @@ async def main_async() -> None:
     app.log("SYSTEM", "SETUP", f"Launching Chrome [{profile_name}] with {len(channels_cfg)} channels...")
     tui_task = asyncio.create_task(tui_renderer(app))
 
-    channel_name = "chrome" if os.path.exists(r"C:\Program Files\Google\Chrome\Application\chrome.exe") else "msedge"
+    is_docker = os.path.exists("/.dockerenv") or not sys.platform.startswith("win")
+    channel_name = None
+    if sys.platform == "win32":
+        if os.path.exists(r"C:\Program Files\Google\Chrome\Application\chrome.exe"):
+            channel_name = "chrome"
+        elif os.path.exists(r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"):
+            channel_name = "msedge"
+
+    launch_kwargs = {
+        "user_data_dir": profile_dir,
+        "headless": is_docker or not is_gui,
+        "args": browser_args,
+        "viewport": {"width": 1280, "height": 800}
+    }
+    if channel_name:
+        launch_kwargs["channel"] = channel_name
 
     async with async_playwright() as p:
-        ctx: BrowserContext = await p.chromium.launch_persistent_context(
-            user_data_dir=profile_dir,
-            channel=channel_name,
-            headless=False,
-            args=browser_args,
-            viewport={"width": 1280, "height": 800}
-        )
+        ctx: BrowserContext = await p.chromium.launch_persistent_context(**launch_kwargs)
 
         pages: list[Page] = [ctx.pages[0] if ctx.pages else await ctx.new_page()]
         for _ in range(1, len(channels_cfg)):
