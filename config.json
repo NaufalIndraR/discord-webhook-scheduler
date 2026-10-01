@@ -21,6 +21,13 @@
       "message_file": "msg3.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 4 (Crime Cards)",
+      "channel_url": "https://discord.com/channels/571992648190263317/742546954503848006",
+      "message_file": "msg4.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
     }
   ]
 }
