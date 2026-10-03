@@ -28,6 +28,20 @@
       "message_file": "msg4.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 5 (Vending Shop Question)",
+      "channel_url": "https://discord.com/channels/571992648190263317/773356970056220693",
+      "message_file": "msg5.txt",
+      "interval_seconds": 300,
+      "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 6 (Harvest Blocks)",
+      "channel_url": "https://discord.com/channels/571992648190263317/806456916586790912",
+      "message_file": "msg6.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
     }
   ]
 }
