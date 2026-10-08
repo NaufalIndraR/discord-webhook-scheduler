@@ -56,6 +56,13 @@
       "message_file": "msg8.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 9 (IOTS)",
+      "channel_url": "https://discord.com/channels/571992648190263317/782718904056807494",
+      "message_file": "msg9.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
     }
   ]
 }
