@@ -63,6 +63,13 @@
       "message_file": "msg9.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 10 (Buy Sam Fisher)",
+      "channel_url": "https://discord.com/channels/571992648190263317/944660041636659271",
+      "message_file": "msg10.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
     }
   ]
 }
