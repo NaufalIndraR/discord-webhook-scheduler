@@ -5,6 +5,7 @@ services:
     build: .
     container_name: discord-scheduler
     restart: always
+    shm_size: '1gb'
     environment:
       - USER_TOKEN=${USER_TOKEN}
       - CHANNEL_ID=${CHANNEL_ID}
@@ -12,3 +13,7 @@ services:
     volumes:
       - ./config.json:/app/config.json
       - ./log_user.txt:/app/log_user.txt
+      - discord_browser_data:/app/discord_browser_data
+
+volumes:
+  discord_browser_data:

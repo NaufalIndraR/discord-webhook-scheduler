@@ -169,26 +169,72 @@ async def set_window_bounds(context: BrowserContext, page: Page, x: int, y: int)
         pass
 
 
-async def wait_for_chat_box(page: Page, ctx: BrowserContext, hidden: bool, state: AppState) -> bool:
-    """Wait for Discord textbox. Automatically restores window to screen if login required."""
+async def wait_for_chat_box(page: Page, ctx: BrowserContext, hidden: bool, state: AppState, ch_name: str = "") -> bool:
+    """Wait for Discord textbox. Automatically restores window if login needed and handles focus/diagnostics."""
     start = time.time()
     restored = False
-    while time.time() - start < 300:
+    selectors = [
+        'div[role="textbox"]',
+        'div[class*="slateTextArea"]',
+        'div[class*="textArea_"]',
+        'form div[role="textbox"]'
+    ]
+
+    try:
+        await page.bring_to_front()
+    except Exception:
+        pass
+
+    while time.time() - start < 60:
         try:
-            if await page.is_visible('div[role="textbox"]'):
-                if hidden and restored:
-                    await asyncio.sleep(1)
-                    await set_window_bounds(ctx, page, -3200, -3200)
-                    state.log("SYSTEM", "INFO", "Chat box ready. Window hidden back offscreen.")
-                return True
+            for sel in selectors:
+                if await page.is_visible(sel):
+                    if hidden and restored and sys.platform == "win32":
+                        await asyncio.sleep(1)
+                        await set_window_bounds(ctx, page, -3200, -3200)
+                        state.log("SYSTEM", "INFO", "Chat box ready. Window hidden back offscreen.")
+                    return True
+
+            # Diagnose reasons if chat box is missing
+            diag = await page.evaluate("""() => {
+                const text = document.body ? document.body.innerText : '';
+                if (/you do not have permission to send messages/i.test(text)) return "NO_PERMISSION";
+                if (/must complete a few steps before you can talk/i.test(text)) return "RULES_GATE";
+                if (/channel is locked|read-only/i.test(text)) return "LOCKED";
+                return null;
+            }""")
+            if diag == "NO_PERMISSION":
+                state.log(ch_name or "CHANNEL", "ERR", "No permission to send in this channel (Read-only).")
+                return False
+            elif diag == "RULES_GATE":
+                state.log(ch_name or "CHANNEL", "WARN", "Membership rules agreement required.")
+                complete_btn = page.locator('button:has-text("Complete")').first
+                if await complete_btn.is_visible():
+                    await complete_btn.click()
+
+            curr_url = page.url
+            if "login" in curr_url and time.time() - start > 15:
+                state.log(ch_name or "CHANNEL", "LOGIN", "Redirected to login. Session not authenticated.")
+                return False
+
         except Exception:
             pass
 
-        if hidden and not restored and (time.time() - start > 8 or "login" in page.url):
+        # Periodically re-focus page so Chrome doesn't throttle background rendering
+        elapsed = int(time.time() - start)
+        if elapsed > 0 and elapsed % 12 == 0:
+            try:
+                await page.bring_to_front()
+            except Exception:
+                pass
+
+        if hidden and not restored and sys.platform == "win32" and (time.time() - start > 8 or "login" in page.url):
             await set_window_bounds(ctx, page, 100, 100)
             restored = True
             state.log("SYSTEM", "LOGIN", "Login needed. Browser window shown on screen.")
+
         await asyncio.sleep(2)
+
     return False
 
 
@@ -219,11 +265,20 @@ async def get_slowmode_seconds(page: Page) -> int:
 
 async def send_discord_message(page: Page, text: str) -> bool:
     """Type and dispatch message to Discord textbox without moving cursor."""
-    box = page.locator('div[role="textbox"]').first
-    await box.wait_for(state="visible", timeout=10000)
+    await page.bring_to_front()
+    box = None
+    for sel in ['div[role="textbox"]', 'div[class*="slateTextArea"]', 'div[class*="textArea_"]', '[role="textbox"]']:
+        loc = page.locator(sel).first
+        if await loc.is_visible():
+            box = loc
+            break
+    if not box:
+        box = page.locator('div[role="textbox"]').first
+
+    await box.wait_for(state="visible", timeout=15000)
     await box.click()
     await box.fill(text)
-    await asyncio.sleep(0.2)
+    await asyncio.sleep(0.3)
     await box.press("Enter")
     await asyncio.sleep(0.6)
     if (await box.inner_text()).strip():
@@ -241,15 +296,25 @@ async def channel_worker(
     ctx: BrowserContext,
     app: AppState
 ) -> None:
-    """Independent worker loop for a single channel."""
+    """Independent worker loop for a single channel with auto-reconnection."""
     # Staggered startup to prevent simultaneous lock contention
     if ch.index > 1:
-        await asyncio.sleep((ch.index - 1) * 1.5)
+        await asyncio.sleep((ch.index - 1) * 2.0)
 
-    if not await wait_for_chat_box(page, ctx, hidden, app):
+    # Initial check with retry loop (never exit permanently)
+    chat_box_ready = False
+    while app.is_running and not chat_box_ready:
+        if await wait_for_chat_box(page, ctx, hidden, app, ch_name=ch.name):
+            chat_box_ready = True
+            break
         ch.status = "ERROR"
-        app.log(ch.name, "ERR", "Failed to detect chat box.")
-        return
+        app.log(ch.name, "ERR", "Chat box not detected. Retrying in 30s...")
+        await asyncio.sleep(30.0)
+        try:
+            await page.bring_to_front()
+            await page.goto(ch.url, wait_until="domcontentloaded", timeout=45000)
+        except Exception:
+            pass
 
     ch.status = "READY"
     app.log(ch.name, "OK", "Channel tab ready. Starting independent timer.")
@@ -404,6 +469,10 @@ async def main_async() -> None:
         "--disable-background-timer-throttling",
         "--disable-backgrounding-occluded-windows",
         "--disable-renderer-backgrounding",
+        "--disable-dev-shm-usage",
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-gpu",
     ]
     if not is_gui:
         browser_args.extend(["--window-position=-3200,-3200", "--start-minimized"])
@@ -432,8 +501,6 @@ async def main_async() -> None:
         ctx: BrowserContext = await p.chromium.launch_persistent_context(**launch_kwargs)
 
         pages: list[Page] = [ctx.pages[0] if ctx.pages else await ctx.new_page()]
-        for _ in range(1, len(channels_cfg)):
-            pages.append(await ctx.new_page())
 
         # Verify initial login on primary channel
         token = get_discord_token()
@@ -444,11 +511,12 @@ async def main_async() -> None:
 
         app.log("SYSTEM", "SETUP", "Navigating to primary channel...")
         try:
+            await pages[0].bring_to_front()
             await pages[0].goto(channels_cfg[0]["channel_url"], wait_until="domcontentloaded", timeout=60000)
         except Exception:
             pass
 
-        if not await wait_for_chat_box(pages[0], ctx, not is_gui, app):
+        if not await wait_for_chat_box(pages[0], ctx, not is_gui, app, ch_name=channels_cfg[0].get("name", "Channel 1")):
             if not token:
                 app.log("SYSTEM", "ERR", "Login failed! Please set USER_TOKEN in Dokploy Environment or config.json.")
             else:
@@ -456,15 +524,19 @@ async def main_async() -> None:
             await ctx.close()
             return
 
-        # Open remaining channel tabs concurrently
-        async def load_tab(i: int, page: Page, url: str):
-            if i > 0:
-                try:
-                    await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-                except Exception:
-                    pass
-
-        await asyncio.gather(*(load_tab(i, pages[i], c["channel_url"]) for i, c in enumerate(channels_cfg)))
+        # Open and initialize remaining channel tabs sequentially with active focus
+        app.log("SYSTEM", "SETUP", f"Opening {len(channels_cfg) - 1} remaining channel tabs...")
+        for i in range(1, len(channels_cfg)):
+            c = channels_cfg[i]
+            app.log("SYSTEM", "SETUP", f"Loading tab [{i+1}/{len(channels_cfg)}] {c.get('name', '')}...")
+            new_p = await ctx.new_page()
+            pages.append(new_p)
+            try:
+                await new_p.bring_to_front()
+                await new_p.goto(c["channel_url"], wait_until="domcontentloaded", timeout=45000)
+                await asyncio.sleep(1.5)
+            except Exception as e:
+                app.log("SYSTEM", "WARN", f"Tab {i+1} notice: {e}")
 
         # Launch independent workers
         send_lock = asyncio.Lock()
