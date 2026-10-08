@@ -49,6 +49,13 @@
       "message_file": "msg7.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 8 (Locks)",
+      "channel_url": "https://discord.com/channels/571992648190263317/878779329864167504",
+      "message_file": "msg8.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
     }
   ]
 }
