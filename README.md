@@ -35,7 +35,7 @@ Didesain khusus untuk menghindari deteksi bot dan larangan akun (*ban*) dengan m
 
 ```text
 discord-webhook-scheduler/
-├── msg1.txt                # Pesan untuk Channel 1 (TVSRQ Items)
+├── msg1.txt                # Pesan untuk Channel 1 (BHZR Items)
 ├── msg2.txt                # Pesan untuk Channel 2 (WL Buying)
 ├── msg3.txt                # Pesan untuk Channel 3 (Seeds & Blocks)
 ├── config.json             # Konfigurasi daftar channel & interval
@@ -53,7 +53,7 @@ Contoh konfigurasi 3 channel dengan file pesan dan interval masing-masing:
 {
   "channels": [
     {
-      "name": "Channel 1 (TVSRQ Items)",
+      "name": "Channel 1 (BHZR Items)",
       "channel_url": "https://discord.com/channels/1554664263937695864/1554664264390672445",
       "message_file": "msg1.txt",
       "interval_seconds": 5,
