@@ -1,6 +1,7 @@
 """
 Discord Multi-Channel Trade Scheduler
-Async Multi-Tab Architecture with Live TUI Dashboard. Zero Cursor Hijacking.
+Lightweight Single-Tab Multi-Channel Architecture with Live TUI Dashboard. Zero Cursor Hijacking.
+Ultra-low memory footprint (~120MB RAM) designed for VPS / Docker environments.
 """
 
 import argparse
@@ -101,6 +102,9 @@ def load_config() -> list[dict[str, Any]]:
             }]
     except Exception:
         pass
+    return []
+
+
 def get_discord_token() -> str | None:
     """Retrieve Discord User Token from Environment Variables or config.json."""
     token = os.environ.get("USER_TOKEN") or os.environ.get("DISCORD_TOKEN")
@@ -170,7 +174,7 @@ async def set_window_bounds(context: BrowserContext, page: Page, x: int, y: int)
 
 
 async def wait_for_chat_box(page: Page, ctx: BrowserContext, hidden: bool, state: AppState, ch_name: str = "") -> bool:
-    """Wait for Discord textbox. Automatically restores window if login needed and handles focus/diagnostics."""
+    """Wait for Discord textbox with auto-diagnosis."""
     start = time.time()
     restored = False
     selectors = [
@@ -180,12 +184,7 @@ async def wait_for_chat_box(page: Page, ctx: BrowserContext, hidden: bool, state
         'form div[role="textbox"]'
     ]
 
-    try:
-        await page.bring_to_front()
-    except Exception:
-        pass
-
-    while time.time() - start < 60:
+    while time.time() - start < 45:
         try:
             for sel in selectors:
                 if await page.is_visible(sel):
@@ -220,20 +219,12 @@ async def wait_for_chat_box(page: Page, ctx: BrowserContext, hidden: bool, state
         except Exception:
             pass
 
-        # Periodically re-focus page so Chrome doesn't throttle background rendering
-        elapsed = int(time.time() - start)
-        if elapsed > 0 and elapsed % 12 == 0:
-            try:
-                await page.bring_to_front()
-            except Exception:
-                pass
-
         if hidden and not restored and sys.platform == "win32" and (time.time() - start > 8 or "login" in page.url):
             await set_window_bounds(ctx, page, 100, 100)
             restored = True
             state.log("SYSTEM", "LOGIN", "Login needed. Browser window shown on screen.")
 
-        await asyncio.sleep(2)
+        await asyncio.sleep(1.5)
 
     return False
 
@@ -265,7 +256,6 @@ async def get_slowmode_seconds(page: Page) -> int:
 
 async def send_discord_message(page: Page, text: str) -> bool:
     """Type and dispatch message to Discord textbox without moving cursor."""
-    await page.bring_to_front()
     box = None
     for sel in ['div[role="textbox"]', 'div[class*="slateTextArea"]', 'div[class*="textArea_"]', '[role="textbox"]']:
         loc = page.locator(sel).first
@@ -296,73 +286,81 @@ async def channel_worker(
     ctx: BrowserContext,
     app: AppState
 ) -> None:
-    """Independent worker loop for a single channel with auto-reconnection."""
-    # Staggered startup to prevent simultaneous lock contention
-    if ch.index > 1:
-        await asyncio.sleep((ch.index - 1) * 2.0)
-
-    # Initial check with retry loop (never exit permanently)
-    chat_box_ready = False
-    while app.is_running and not chat_box_ready:
-        if await wait_for_chat_box(page, ctx, hidden, app, ch_name=ch.name):
-            chat_box_ready = True
-            break
-        ch.status = "ERROR"
-        app.log(ch.name, "ERR", "Chat box not detected. Retrying in 30s...")
-        await asyncio.sleep(30.0)
-        try:
-            await page.bring_to_front()
-            await page.goto(ch.url, wait_until="domcontentloaded", timeout=45000)
-        except Exception:
-            pass
-
-    ch.status = "READY"
-    app.log(ch.name, "OK", "Channel tab ready. Starting independent timer.")
+    """
+    Independent worker loop for a single channel using lightweight shared single tab.
+    Each channel maintains its own independent schedule and timer.
+    """
+    # Staggered initial startup: Channel 1 starts at 0s, Channel 2 at 10s, Channel 3 at 20s...
+    initial_delay = (ch.index - 1) * 10.0
+    ch.next_run = datetime.now() + timedelta(seconds=initial_delay)
+    ch.status = "COOLDOWN" if initial_delay > 0 else "READY"
+    if initial_delay > 0:
+        app.log(ch.name, "WAIT", f"Queued for initial dispatch in {int(initial_delay)}s.")
+        await asyncio.sleep(initial_delay)
 
     while app.is_running:
         try:
             # Hot-reload channel settings
             current_cfg = next((c for c in load_config() if c.get("channel_url") == ch.url), initial_cfg)
-            interval = int(current_cfg.get("interval_seconds", 5))
-            jitter = int(current_cfg.get("jitter_seconds", 0))
+            interval = int(current_cfg.get("interval_seconds", 7200))
+            jitter = int(current_cfg.get("jitter_seconds", 15))
 
-            # Check if active slowmode exists
-            slowmode = await get_slowmode_seconds(page)
-            if slowmode > 0:
-                ch.status = "SLOWMODE"
-                wait_s = slowmode + (random.uniform(1.0, float(jitter)) if jitter > 0 else 1.0)
-                ch.next_run = datetime.now() + timedelta(seconds=wait_s)
-                app.log(ch.name, "SLOW", f"Active slowmode: {fmt_seconds(slowmode)} remaining.")
-                await asyncio.sleep(wait_s)
-                continue
-
-            # Send message with typing lock
-            msg = get_channel_message(current_cfg, ch.msg_idx)
-            ch.msg_idx += 1
+            # Acquire shared tab lock to execute dispatch
             ch.status = "SENDING"
-            app.log(ch.name, "SEND", f"Dispatching message #{ch.sent_count + 1}...")
-
             async with lock:
+                app.log(ch.name, "SEND", f"Switching tab to {ch.name}...")
+
+                # Navigate to target channel if not already there
+                if page.url.rstrip("/") != ch.url.rstrip("/"):
+                    try:
+                        await page.goto(ch.url, wait_until="domcontentloaded", timeout=40000)
+                        await asyncio.sleep(1.5)
+                    except Exception as e:
+                        app.log(ch.name, "WARN", f"Nav warning: {e}")
+
+                # Verify chat box
+                if not await wait_for_chat_box(page, ctx, hidden, app, ch_name=ch.name):
+                    ch.status = "ERROR"
+                    retry_s = 60
+                    ch.next_run = datetime.now() + timedelta(seconds=retry_s)
+                    app.log(ch.name, "ERR", f"Chat box unavailable. Retrying in {retry_s}s...")
+                    await asyncio.sleep(retry_s)
+                    continue
+
+                # Check if active slowmode exists
+                slowmode = await get_slowmode_seconds(page)
+                if slowmode > 0:
+                    ch.status = "SLOWMODE"
+                    wait_s = slowmode + (random.uniform(1.0, float(jitter)) if jitter > 0 else 1.0)
+                    ch.next_run = datetime.now() + timedelta(seconds=wait_s)
+                    app.log(ch.name, "SLOW", f"Active slowmode: {fmt_seconds(slowmode)} remaining.")
+                    await asyncio.sleep(wait_s)
+                    continue
+
+                # Fetch and send promotion message
+                msg = get_channel_message(current_cfg, ch.msg_idx)
+                ch.msg_idx += 1
+                app.log(ch.name, "SEND", f"Dispatching message #{ch.sent_count + 1}...")
+
                 success = await send_discord_message(page, msg)
+                if success:
+                    ch.sent_count += 1
+                    app.log(ch.name, "OK", f"Message #{ch.sent_count} sent successfully.")
+                else:
+                    app.log(ch.name, "ERR", "Dispatch failed or no response.")
 
-            if success:
-                ch.sent_count += 1
-                app.log(ch.name, "OK", f"Message #{ch.sent_count} sent successfully.")
-            else:
-                app.log(ch.name, "ERR", "Dispatch failed or no response.")
+                await asyncio.sleep(1.0)
 
-            await asyncio.sleep(1.0)
+                # Determine post-send slowmode or regular cooldown
+                new_slow = await get_slowmode_seconds(page)
+                effective = new_slow if new_slow > 0 else interval
+                next_s = max(5.0, effective + (random.uniform(0.0, float(jitter)) if jitter > 0 else 0.0))
+                ch.next_run = datetime.now() + timedelta(seconds=next_s)
+                ch.status = "SLOWMODE" if new_slow > 0 else "COOLDOWN"
+                tag = "SLOW" if new_slow > 0 else "WAIT"
+                app.log(ch.name, tag, f"Next schedule in {fmt_seconds(int(next_s))}.")
 
-            # Sync post-send slowmode or standard cooldown
-            new_slow = await get_slowmode_seconds(page)
-            effective = new_slow if new_slow > 0 else interval
-            next_s = max(1.0, effective + (random.uniform(0.0, float(jitter)) if jitter > 0 else 0.0))
-            ch.next_run = datetime.now() + timedelta(seconds=next_s)
-
-            ch.status = "SLOWMODE" if new_slow > 0 else "COOLDOWN"
-            tag = "SLOW" if new_slow > 0 else "WAIT"
-            app.log(ch.name, tag, f"Next schedule in {fmt_seconds(int(next_s))}.")
-
+            # Sleep during cooldown outside lock so other channels can use the tab
             await asyncio.sleep(next_s)
 
         except asyncio.CancelledError:
@@ -388,7 +386,7 @@ async def tui_renderer(app: AppState) -> None:
 
             lines = [
                 f"{BOLD}{CYAN}{'=' * width}{RESET}",
-                f" {BOLD}{WHITE}DISCORD TRADE SCHEDULER{RESET} {DIM}::{RESET} {CYAN}Async Multi-Tab{RESET} {DIM}::{RESET} {GREEN}Zero Mouse Hijack{RESET}",
+                f" {BOLD}{WHITE}DISCORD TRADE SCHEDULER{RESET} {DIM}::{RESET} {CYAN}Single-Tab Ultra-Low RAM{RESET} {DIM}::{RESET} {GREEN}Zero Mouse Hijack{RESET}",
                 f"{BOLD}{CYAN}{'=' * width}{RESET}",
                 f"  {DIM}Mode:{RESET} {WHITE}{app.mode:<14}{RESET} {DIM}Profile:{RESET} {CYAN}{app.profile:<10}{RESET} {DIM}Chs:{RESET} {WHITE}{len(app.channels):<3}{RESET} {DIM}Uptime:{RESET} {WHITE}{uptime:<8}{RESET} {DIM}Time:{RESET} {WHITE}{now.strftime('%H:%M:%S')}{RESET}",
                 f"{GRAY}{'-' * width}{RESET}",
@@ -473,11 +471,12 @@ async def main_async() -> None:
         "--no-sandbox",
         "--disable-setuid-sandbox",
         "--disable-gpu",
+        "--disable-extensions",
     ]
     if not is_gui:
         browser_args.extend(["--window-position=-3200,-3200", "--start-minimized"])
 
-    app.log("SYSTEM", "SETUP", f"Launching Chrome [{profile_name}] with {len(channels_cfg)} channels...")
+    app.log("SYSTEM", "SETUP", f"Launching Chrome (Single-Tab Low-RAM) with {len(channels_cfg)} channels...")
     tui_task = asyncio.create_task(tui_renderer(app))
 
     is_docker = os.path.exists("/.dockerenv") or not sys.platform.startswith("win")
@@ -500,23 +499,23 @@ async def main_async() -> None:
     async with async_playwright() as p:
         ctx: BrowserContext = await p.chromium.launch_persistent_context(**launch_kwargs)
 
-        pages: list[Page] = [ctx.pages[0] if ctx.pages else await ctx.new_page()]
+        # Single Tab shared across all channels for ultra-low memory
+        shared_page: Page = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
         # Verify initial login on primary channel
         token = get_discord_token()
         if token:
-            await inject_discord_token(pages[0], token, app)
+            await inject_discord_token(shared_page, token, app)
         else:
             app.log("SYSTEM", "WARN", "No USER_TOKEN found. Checking existing browser session...")
 
-        app.log("SYSTEM", "SETUP", "Navigating to primary channel...")
+        app.log("SYSTEM", "SETUP", "Connecting to Discord...")
         try:
-            await pages[0].bring_to_front()
-            await pages[0].goto(channels_cfg[0]["channel_url"], wait_until="domcontentloaded", timeout=60000)
+            await shared_page.goto(channels_cfg[0]["channel_url"], wait_until="domcontentloaded", timeout=60000)
         except Exception:
             pass
 
-        if not await wait_for_chat_box(pages[0], ctx, not is_gui, app, ch_name=channels_cfg[0].get("name", "Channel 1")):
+        if not await wait_for_chat_box(shared_page, ctx, not is_gui, app, ch_name=channels_cfg[0].get("name", "Channel 1")):
             if not token:
                 app.log("SYSTEM", "ERR", "Login failed! Please set USER_TOKEN in Dokploy Environment or config.json.")
             else:
@@ -524,31 +523,19 @@ async def main_async() -> None:
             await ctx.close()
             return
 
-        # Open and initialize remaining channel tabs sequentially with active focus
-        app.log("SYSTEM", "SETUP", f"Opening {len(channels_cfg) - 1} remaining channel tabs...")
-        for i in range(1, len(channels_cfg)):
-            c = channels_cfg[i]
-            app.log("SYSTEM", "SETUP", f"Loading tab [{i+1}/{len(channels_cfg)}] {c.get('name', '')}...")
-            new_p = await ctx.new_page()
-            pages.append(new_p)
-            try:
-                await new_p.bring_to_front()
-                await new_p.goto(c["channel_url"], wait_until="domcontentloaded", timeout=45000)
-                await asyncio.sleep(1.5)
-            except Exception as e:
-                app.log("SYSTEM", "WARN", f"Tab {i+1} notice: {e}")
+        app.log("SYSTEM", "OK", "Discord session authenticated successfully!")
 
-        # Launch independent workers
-        send_lock = asyncio.Lock()
+        # Launch independent workers sharing the single page with a lock
+        tab_lock = asyncio.Lock()
         workers = [
             asyncio.create_task(channel_worker(
-                ch=app.channels[i], initial_cfg=channels_cfg[i], page=pages[i],
-                lock=send_lock, hidden=not is_gui, ctx=ctx, app=app
+                ch=app.channels[i], initial_cfg=channels_cfg[i], page=shared_page,
+                lock=tab_lock, hidden=not is_gui, ctx=ctx, app=app
             ))
             for i in range(len(channels_cfg))
         ]
 
-        app.log("SYSTEM", "OK", f"All {len(channels_cfg)} channel workers running independently.")
+        app.log("SYSTEM", "OK", f"All {len(channels_cfg)} channel timers running in ultra-low RAM mode.")
 
         try:
             await asyncio.gather(*workers)

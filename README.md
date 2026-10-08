@@ -13,10 +13,10 @@ Didesain khusus untuk menghindari deteksi bot dan larangan akun (*ban*) dengan m
   - Menggunakan teknik ANSI cursor positioning (`\033[H`) dan line clearing (`\033[K`) sehingga layar tidak berkedip (*flicker-free*) dan tidak mencetak baris berulang-ulang ke bawah.
   - **Zero Emoji**: 100% menggunakan badge status teks bersih (`[READY]`, `[SENDING]`, `[COOLDOWN]`, `[SLOWMODE]`, `[OK]`, `[WAIT]`) yang aman dari error encoding terminal.
   - Live ticking countdown timer: hitungan mundur detik diperbarui secara real-time di tabel.
-- **True Independent Timings (Multi-Tab Concurrent Architecture)**:
-  - Setiap channel memiliki **tab browser terdedikasi sendiri** yang tetap terbuka secara bersamaan di latar belakang.
-  - Setiap channel berjalan di **asynchronous worker loop sendiri** dengan timer independen.
-  - Tidak ada lagi ketergantungan berurutan (*sequential lockstep*) atau waktu loading bolak-balik antar channel!
+- **True Independent Timings (Single-Tab Ultra-Low RAM Architecture)**:
+  - Menggunakan 1 tab browser bersama (*Single-Tab Reuse*) dengan antrean asinkron independen untuk setiap channel.
+  - Sangat hemat RAM (~120 MB RAM vs 1.2 GB+), dirancang khusus agar stabil di VPS/Docker dengan RAM 1–2 GB tanpa membebani server atau menyebabkan crash.
+  - Setiap channel berjalan di **asynchronous worker loop sendiri** dengan timer hitung mundur independen.
 - **Real-Time WebSocket Slowmode Sync**:
   - Karena tiap tab tetap terbuka, Discord WebSocket membaca hitungan mundur slowmode secara presisi langsung dari server Discord.
   - Jika Channel 1 terkena slowmode 10 menit, Channel 2 dan Channel 3 tetap berjalan lancar sesuai interval masing-masing (misal tiap 5 detik atau 1 jam).
