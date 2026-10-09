@@ -58,15 +58,15 @@
       "jitter_seconds": 15
     },
     {
-      "name": "Channel 9 (IOTS)",
-      "channel_url": "https://discord.com/channels/571992648190263317/782718904056807494",
+      "name": "Channel 9 (Clothing (Mask))",
+      "channel_url": "https://discord.com/channels/571992648190263317/944657054377836645",
       "message_file": "msg9.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
     },
     {
-      "name": "Channel 10 (Buy Sam Fisher)",
-      "channel_url": "https://discord.com/channels/571992648190263317/944660041636659271",
+      "name": "Channel 10 (Fuel Pack)",
+      "channel_url": "https://discord.com/channels/571992648190263317/900823352275521546",
       "message_file": "msg10.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
