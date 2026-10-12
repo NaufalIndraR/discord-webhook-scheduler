@@ -58,8 +58,8 @@
       "jitter_seconds": 15
     },
     {
-      "name": "Channel 9 (Clothing (Mask))",
-      "channel_url": "https://discord.com/channels/571992648190263317/944657054377836645",
+      "name": "Channel 9 (UbiWeek Items)",
+      "channel_url": "https://discord.com/channels/571992648190263317/997609617410490418",
       "message_file": "msg9.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
@@ -68,6 +68,13 @@
       "name": "Channel 10 (Fuel Pack)",
       "channel_url": "https://discord.com/channels/571992648190263317/900823352275521546",
       "message_file": "msg10.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 11 (Wonder Week)",
+      "channel_url": "https://discord.com/channels/571992648190263317/1031260762083184650",
+      "message_file": "msg11.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
     }
