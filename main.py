@@ -36,7 +36,7 @@ WHITE, GRAY, CYAN, GREEN, YELLOW, MAGENTA, RED = (
 )
 
 STATUS_COLORS = {
-    "INIT": GRAY, "READY": GREEN, "SENDING": CYAN + BOLD,
+    "INIT": GRAY, "READY": GREEN, "QUEUED": YELLOW + BOLD, "SENDING": CYAN + BOLD,
     "COOLDOWN": YELLOW, "SLOWMODE": MAGENTA + BOLD, "ERROR": RED + BOLD,
 }
 TAG_COLORS = {
@@ -83,6 +83,59 @@ class AppState:
 
     def log(self, channel: str, tag: str, msg: str) -> None:
         self.logs.append((datetime.now().strftime("%H:%M:%S"), channel, tag, msg))
+
+
+class TabManager:
+    """
+    Manages the shared single Chromium tab across all channel workers.
+    Provides crash detection, auto-recovery, and periodic preventive tab recycling.
+    """
+    def __init__(self, ctx: BrowserContext, app: AppState, hidden: bool):
+        self.ctx = ctx
+        self.app = app
+        self.hidden = hidden
+        self.lock = asyncio.Lock()
+        self.page: Page | None = None
+        self._crashed: bool = False
+        self.dispatch_count: int = 0
+        self.last_recycle: float = time.time()
+
+    def _on_crash(self, page: Page) -> None:
+        self._crashed = True
+        self.app.log("SYSTEM", "WARN", "Chromium tab crash detected! Auto-recovery triggered.")
+
+    async def get_page(self) -> Page:
+        if self.page is None or self.page.is_closed() or self._crashed:
+            await self.recreate_page("initial/crash recovery")
+        return self.page
+
+    async def recreate_page(self, reason: str = "") -> Page:
+        if reason:
+            self.app.log("SYSTEM", "INFO", f"Refreshing browser tab ({reason})...")
+        if self.page:
+            try:
+                self.page.remove_listener("crash", self._on_crash)
+            except Exception:
+                pass
+            try:
+                await self.page.close()
+            except Exception:
+                pass
+            self.page = None
+
+        self.page = await self.ctx.new_page()
+        self._crashed = False
+        self.page.on("crash", self._on_crash)
+        self.last_recycle = time.time()
+        return self.page
+
+    async def check_periodic_recycle(self) -> None:
+        """Preventive cleanup: recycle tab every 100 dispatches or 4 hours to clear leaked RAM."""
+        self.dispatch_count += 1
+        now = time.time()
+        if self.dispatch_count >= 100 or (now - self.last_recycle) > 14400:
+            self.dispatch_count = 0
+            await self.recreate_page("preventive RAM cleanup")
 
 
 def load_config() -> list[dict[str, Any]]:
@@ -174,7 +227,7 @@ async def set_window_bounds(context: BrowserContext, page: Page, x: int, y: int)
 
 
 async def wait_for_chat_box(page: Page, ctx: BrowserContext, hidden: bool, state: AppState, ch_name: str = "") -> bool:
-    """Wait for Discord textbox with auto-diagnosis."""
+    """Wait for Discord textbox with auto-diagnosis and crash interception."""
     start = time.time()
     restored = False
     selectors = [
@@ -216,8 +269,11 @@ async def wait_for_chat_box(page: Page, ctx: BrowserContext, hidden: bool, state
                 state.log(ch_name or "CHANNEL", "LOGIN", "Redirected to login. Session not authenticated.")
                 return False
 
-        except Exception:
-            pass
+        except Exception as e:
+            err_str = str(e).lower()
+            if "crash" in err_str or "closed" in err_str:
+                state.log(ch_name or "CHANNEL", "WARN", f"Page crashed during wait: {e}")
+                return False
 
         if hidden and not restored and sys.platform == "win32" and (time.time() - start > 8 or "login" in page.url):
             await set_window_bounds(ctx, page, 100, 100)
@@ -256,32 +312,34 @@ async def get_slowmode_seconds(page: Page) -> int:
 
 async def send_discord_message(page: Page, text: str) -> bool:
     """Type and dispatch message to Discord textbox without moving cursor."""
-    box = None
-    for sel in ['div[role="textbox"]', 'div[class*="slateTextArea"]', 'div[class*="textArea_"]', '[role="textbox"]']:
-        loc = page.locator(sel).first
-        if await loc.is_visible():
-            box = loc
-            break
-    if not box:
-        box = page.locator('div[role="textbox"]').first
+    try:
+        box = None
+        for sel in ['div[role="textbox"]', 'div[class*="slateTextArea"]', 'div[class*="textArea_"]', '[role="textbox"]']:
+            loc = page.locator(sel).first
+            if await loc.is_visible():
+                box = loc
+                break
+        if not box:
+            box = page.locator('div[role="textbox"]').first
 
-    await box.wait_for(state="visible", timeout=15000)
-    await box.click()
-    await box.fill(text)
-    await asyncio.sleep(0.3)
-    await box.press("Enter")
-    await asyncio.sleep(0.6)
-    if (await box.inner_text()).strip():
+        await box.wait_for(state="visible", timeout=15000)
+        await box.click()
+        await box.fill(text)
+        await asyncio.sleep(0.3)
         await box.press("Enter")
-        await asyncio.sleep(0.2)
-    return True
+        await asyncio.sleep(0.6)
+        if (await box.inner_text()).strip():
+            await box.press("Enter")
+            await asyncio.sleep(0.2)
+        return True
+    except Exception:
+        return False
 
 
 async def channel_worker(
     ch: ChannelState,
     initial_cfg: dict[str, Any],
-    page: Page,
-    lock: asyncio.Lock,
+    tab_mgr: TabManager,
     hidden: bool,
     ctx: BrowserContext,
     app: AppState
@@ -305,21 +363,42 @@ async def channel_worker(
             interval = int(current_cfg.get("interval_seconds", 7200))
             jitter = int(current_cfg.get("jitter_seconds", 15))
 
-            # Acquire shared tab lock to execute dispatch
-            ch.status = "SENDING"
-            async with lock:
+            # Channel is ready and waiting for tab lock
+            ch.status = "QUEUED"
+            async with tab_mgr.lock:
+                ch.status = "SENDING"
+                page = await tab_mgr.get_page()
                 app.log(ch.name, "SEND", f"Switching tab to {ch.name}...")
 
-                # Navigate to target channel if not already there
-                if page.url.rstrip("/") != ch.url.rstrip("/"):
+                # Navigate to target channel if not already there, with auto-recovery on crash
+                for _ in range(2):
+                    try:
+                        if page.url.rstrip("/") != ch.url.rstrip("/"):
+                            await page.goto(ch.url, wait_until="domcontentloaded", timeout=40000)
+                            await asyncio.sleep(1.5)
+                        break
+                    except Exception as e:
+                        err_str = str(e).lower()
+                        if "crashed" in err_str or "closed" in err_str or tab_mgr._crashed:
+                            app.log(ch.name, "WARN", f"Nav crash detected: {e}. Recovering tab...")
+                            page = await tab_mgr.recreate_page("crash recovery")
+                        else:
+                            app.log(ch.name, "WARN", f"Nav warning: {e}")
+                            break
+
+                # Verify chat box with fallback recovery if tab crashed
+                chat_ok = await wait_for_chat_box(page, ctx, hidden, app, ch_name=ch.name)
+                if not chat_ok and tab_mgr._crashed:
+                    app.log(ch.name, "WARN", "Tab crash during chat check. Recovering tab...")
+                    page = await tab_mgr.recreate_page("crash recovery")
                     try:
                         await page.goto(ch.url, wait_until="domcontentloaded", timeout=40000)
                         await asyncio.sleep(1.5)
+                        chat_ok = await wait_for_chat_box(page, ctx, hidden, app, ch_name=ch.name)
                     except Exception as e:
-                        app.log(ch.name, "WARN", f"Nav warning: {e}")
+                        app.log(ch.name, "ERR", f"Recovery retry failed: {e}")
 
-                # Verify chat box
-                if not await wait_for_chat_box(page, ctx, hidden, app, ch_name=ch.name):
+                if not chat_ok:
                     ch.status = "ERROR"
                     retry_s = 60
                     ch.next_run = datetime.now() + timedelta(seconds=retry_s)
@@ -359,6 +438,9 @@ async def channel_worker(
                 ch.status = "SLOWMODE" if new_slow > 0 else "COOLDOWN"
                 tag = "SLOW" if new_slow > 0 else "WAIT"
                 app.log(ch.name, tag, f"Next schedule in {fmt_seconds(int(next_s))}.")
+
+                # Periodic preventive cleanup to prevent memory leaks over days of uptime
+                await tab_mgr.check_periodic_recycle()
 
             # Sleep during cooldown outside lock so other channels can use the tab
             await asyncio.sleep(next_s)
@@ -472,6 +554,10 @@ async def main_async() -> None:
         "--disable-setuid-sandbox",
         "--disable-gpu",
         "--disable-extensions",
+        "--mute-audio",
+        "--no-default-browser-check",
+        "--disable-breakpad",
+        "--disable-component-update",
     ]
     if not is_gui:
         browser_args.extend(["--window-position=-3200,-3200", "--start-minimized"])
@@ -499,8 +585,8 @@ async def main_async() -> None:
     async with async_playwright() as p:
         ctx: BrowserContext = await p.chromium.launch_persistent_context(**launch_kwargs)
 
-        # Single Tab shared across all channels for ultra-low memory
-        shared_page: Page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+        tab_mgr = TabManager(ctx, app, not is_gui)
+        shared_page = await tab_mgr.get_page()
 
         # Verify initial login on primary channel
         token = get_discord_token()
@@ -525,12 +611,11 @@ async def main_async() -> None:
 
         app.log("SYSTEM", "OK", "Discord session authenticated successfully!")
 
-        # Launch independent workers sharing the single page with a lock
-        tab_lock = asyncio.Lock()
+        # Launch independent workers sharing the single page via TabManager
         workers = [
             asyncio.create_task(channel_worker(
-                ch=app.channels[i], initial_cfg=channels_cfg[i], page=shared_page,
-                lock=tab_lock, hidden=not is_gui, ctx=ctx, app=app
+                ch=app.channels[i], initial_cfg=channels_cfg[i],
+                tab_mgr=tab_mgr, hidden=not is_gui, ctx=ctx, app=app
             ))
             for i in range(len(channels_cfg))
         ]

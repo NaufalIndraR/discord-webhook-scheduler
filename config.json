@@ -84,6 +84,20 @@
       "message_file": "msg12.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 13 (Shifty Block)",
+      "channel_url": "https://discord.com/channels/571992648190263317/742547014197313576",
+      "message_file": "msg13.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 14 (BBM & Wonder Provider)",
+      "channel_url": "https://discord.com/channels/571992648190263317/880294786236579860",
+      "message_file": "msg14.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
     }
   ]
 }
