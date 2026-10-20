@@ -33,6 +33,7 @@
       "name": "Channel 5 (Vending Shop Question)",
       "channel_url": "https://discord.com/channels/571992648190263317/846678373635457024",
       "message_file": "msg5.txt",
+      "enabled": false,
       "interval_seconds": 7200,
       "jitter_seconds": 15
     },
@@ -61,6 +62,7 @@
       "name": "Channel 9 (UbiWeek Items)",
       "channel_url": "https://discord.com/channels/571992648190263317/997609617410490418",
       "message_file": "msg9.txt",
+      "enabled": false,
       "interval_seconds": 7200,
       "jitter_seconds": 15
     },

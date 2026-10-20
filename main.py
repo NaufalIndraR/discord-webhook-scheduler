@@ -38,10 +38,12 @@ WHITE, GRAY, CYAN, GREEN, YELLOW, MAGENTA, RED = (
 STATUS_COLORS = {
     "INIT": GRAY, "READY": GREEN, "QUEUED": YELLOW + BOLD, "SENDING": CYAN + BOLD,
     "COOLDOWN": YELLOW, "SLOWMODE": MAGENTA + BOLD, "ERROR": RED + BOLD,
+    "PAUSED": GRAY + DIM,
 }
 TAG_COLORS = {
     "OK": GREEN, "SEND": CYAN, "WAIT": YELLOW, "SLOW": MAGENTA,
     "ERR": RED, "INFO": WHITE, "SETUP": CYAN, "LOGIN": YELLOW,
+    "PAUSE": YELLOW,
 }
 
 
@@ -350,16 +352,29 @@ async def channel_worker(
     """
     # Staggered initial startup: Channel 1 starts at 0s, Channel 2 at 10s, Channel 3 at 20s...
     initial_delay = (ch.index - 1) * 10.0
-    ch.next_run = datetime.now() + timedelta(seconds=initial_delay)
-    ch.status = "COOLDOWN" if initial_delay > 0 else "READY"
-    if initial_delay > 0:
-        app.log(ch.name, "WAIT", f"Queued for initial dispatch in {int(initial_delay)}s.")
-        await asyncio.sleep(initial_delay)
+    if not initial_cfg.get("enabled", True):
+        ch.status = "PAUSED"
+        ch.next_run = None
+        app.log(ch.name, "PAUSE", "Channel is on hold (disabled in config).")
+    else:
+        ch.next_run = datetime.now() + timedelta(seconds=initial_delay)
+        ch.status = "COOLDOWN" if initial_delay > 0 else "READY"
+        if initial_delay > 0:
+            app.log(ch.name, "WAIT", f"Queued for initial dispatch in {int(initial_delay)}s.")
+            await asyncio.sleep(initial_delay)
 
     while app.is_running:
         try:
             # Hot-reload channel settings
             current_cfg = next((c for c in load_config() if c.get("channel_url") == ch.url), initial_cfg)
+            if not current_cfg.get("enabled", True):
+                if ch.status != "PAUSED":
+                    ch.status = "PAUSED"
+                    ch.next_run = None
+                    app.log(ch.name, "PAUSE", "Channel is on hold (disabled in config).")
+                await asyncio.sleep(5.0)
+                continue
+
             interval = int(current_cfg.get("interval_seconds", 7200))
             jitter = int(current_cfg.get("jitter_seconds", 15))
 
@@ -596,12 +611,13 @@ async def main_async() -> None:
             app.log("SYSTEM", "WARN", "No USER_TOKEN found. Checking existing browser session...")
 
         app.log("SYSTEM", "SETUP", "Connecting to Discord...")
+        login_ch = next((c for c in channels_cfg if c.get("enabled", True)), channels_cfg[0])
         try:
-            await shared_page.goto(channels_cfg[0]["channel_url"], wait_until="domcontentloaded", timeout=60000)
+            await shared_page.goto(login_ch["channel_url"], wait_until="domcontentloaded", timeout=60000)
         except Exception:
             pass
 
-        if not await wait_for_chat_box(shared_page, ctx, not is_gui, app, ch_name=channels_cfg[0].get("name", "Channel 1")):
+        if not await wait_for_chat_box(shared_page, ctx, not is_gui, app, ch_name=login_ch.get("name", "Channel 1")):
             if not token:
                 app.log("SYSTEM", "ERR", "Login failed! Please set USER_TOKEN in Dokploy Environment or config.json.")
             else:
