@@ -33,7 +33,6 @@
       "name": "Channel 5 (Vending Shop Question)",
       "channel_url": "https://discord.com/channels/571992648190263317/846678373635457024",
       "message_file": "msg5.txt",
-      "enabled": false,
       "interval_seconds": 7200,
       "jitter_seconds": 15
     },
@@ -98,6 +97,14 @@
       "name": "Channel 14 (BBM & Wonder Provider)",
       "channel_url": "https://discord.com/channels/571992648190263317/880294786236579860",
       "message_file": "msg14.txt",
+      "enabled": false,
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 15 (Rarity Dark Ticket)",
+      "channel_url": "https://discord.com/channels/571992648190263317/806456962882600960",
+      "message_file": "msg15.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
     }

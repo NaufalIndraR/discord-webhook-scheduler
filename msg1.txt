@@ -3,7 +3,6 @@
 🔴 **Punch Jammer** ➔ **16 :WL:**
 🔵 **Zombie Jammer** ➔ **16 :WL:**
 🟢 **Fire House** ➔ **15 :WL:**
-🟡 **Starship Security Camera** ➔ **5 :WL:**
 🟣 **Antigravity Generator** ➔ **450 :WL:**
 🟠 **Signal Jammer** ➔ **5 :WL:**
 🔴 **Minimod** ➔ **350 :WL:**
