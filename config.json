@@ -105,6 +105,7 @@
       "name": "Channel 15 (Rarity Dark Ticket)",
       "channel_url": "https://discord.com/channels/571992648190263317/806456962882600960",
       "message_file": "msg15.txt",
+      "enabled": false,
       "interval_seconds": 7200,
       "jitter_seconds": 15
     }
