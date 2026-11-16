@@ -58,14 +58,6 @@
       "jitter_seconds": 15
     },
     {
-      "name": "Channel 9 (UbiWeek Items)",
-      "channel_url": "https://discord.com/channels/571992648190263317/997609617410490418",
-      "message_file": "msg9.txt",
-      "enabled": false,
-      "interval_seconds": 7200,
-      "jitter_seconds": 15
-    },
-    {
       "name": "Channel 10 (Fuel Pack)",
       "channel_url": "https://discord.com/channels/571992648190263317/900823352275521546",
       "message_file": "msg10.txt",
@@ -87,7 +79,7 @@
       "jitter_seconds": 15
     },
     {
-      "name": "Channel 13 (Shifty Block)",
+      "name": "Channel 13 (Blocks)",
       "channel_url": "https://discord.com/channels/571992648190263317/742547014197313576",
       "message_file": "msg13.txt",
       "interval_seconds": 7200,
@@ -102,10 +94,16 @@
       "jitter_seconds": 15
     },
     {
-      "name": "Channel 15 (Rarity Dark Ticket)",
-      "channel_url": "https://discord.com/channels/571992648190263317/806456962882600960",
-      "message_file": "msg15.txt",
-      "enabled": false,
+      "name": "Channel 16 (Gala Tools / Star Tools)",
+      "channel_url": "https://discord.com/channels/571992648190263317/733052554820452423",
+      "message_file": "msg16.txt",
+      "interval_seconds": 7200,
+      "jitter_seconds": 15
+    },
+    {
+      "name": "Channel 17 (Surg Tools)",
+      "channel_url": "https://discord.com/channels/571992648190263317/733049257648586792",
+      "message_file": "msg17.txt",
       "interval_seconds": 7200,
       "jitter_seconds": 15
     }
